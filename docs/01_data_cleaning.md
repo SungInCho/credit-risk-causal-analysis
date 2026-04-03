@@ -2,7 +2,7 @@
 
 **Notebook**: [`notebooks/01_data_cleaning.ipynb`](../notebooks/01_data_cleaning.ipynb)
 **Inputs**: `data/raw/accepted_2007_to_2018Q4.csv`, `data/raw/rejected_2007_to_2018Q4.csv`
-**Outputs**: `outputs/intermediate/accepted_cleaned.parquet`, `accepted_with_current.parquet`, `rejected_cleaned.parquet`
+**Outputs**: `data/processed/accepted_cleaned.parquet`, `data/processed/accepted_with_current.parquet`, `data/processed/rejected_cleaned.parquet`
 
 ---
 
@@ -23,11 +23,10 @@ The core identification strategy requires loans with *resolved* outcomes (Fully 
 - Pre-2013 loans reflect a structurally different post-GFC market and are excluded for homogeneity.
 
 **Implementation**:
-- Parse `issue_d` (e.g. `"Jan-2015"`) to a `datetime` object.
-- Extract `issue_year`.
-- Keep rows where `2013 ≤ issue_year ≤ 2016`.
+- Parse `issue_d` (e.g. `"Jan-2015"`) to a `datetime` object; extract `issue_year` as a nullable `Int64` column.
+- Keep rows where `2013 ≤ issue_year ≤ 2016` → **1,225,945 rows**.
 - Separately save a copy that retains *Current* loans (`accepted_with_current.parquet`) for the robustness check in Notebook 05.
-- For the main analysis, keep only completed loan statuses: *Fully Paid*, *Charged Off*, *Default*, and the two "does not meet credit policy" variants.
+- For the main analysis, keep only completed loan statuses: *Fully Paid*, *Charged Off*, *Default*, and the two "does not meet credit policy" variants → **1,026,558 rows** (199,387 Current/Late/Grace Period loans dropped).
 
 ---
 
@@ -50,7 +49,7 @@ The core identification strategy requires loans with *resolved* outcomes (Fully 
 | `mths_since_last_delinq` | Never delinquent | Fill with `999` (sentinel); also create binary `ever_delinq` flag |
 | `emp_length_num` | "n/a" / self-employed | Fill with `-1` to distinguish from "< 1 year" (0) |
 | `revol_util` | ~0.3% missing | Fill with **grade-level median** |
-| Critical columns (`int_rate`, `grade`, `dti`, `fico_mid`, `annual_inc`, `loan_amnt`, `term_months`, `loan_status`) | Data error | **Drop row** |
+| Critical columns (`int_rate`, `grade`, `sub_grade`, `dti`, `fico_mid`, `annual_inc`, `loan_amnt`, `term_months`, `loan_status`) | Data error | **Drop row** |
 
 Critical columns are defined as those required for both outcome construction and basic covariate control. Less than 0.5% of rows are affected.
 
@@ -60,22 +59,32 @@ Critical columns are defined as those required for both outcome construction and
 
 | Column | Issue | Treatment |
 |---|---|---|
-| `annual_inc` | A small number of entries exceed $10 M — clear data-entry errors | **Cap at the 99th percentile** (`annual_inc_cap`); original column retained |
-| `revol_util` | A handful of values > 100% (data errors) | **Cap at 100%** |
-| `dti` | Values > 100 are implausible for consumer loans | **Drop row** |
-| `loan_amnt` | A few rows have `$0` (Lending Club minimum is `$1,000`) | **Drop row** |
+| `annual_inc` | A small number of entries exceed $10 M — clear data-entry errors | **Cap at the 99th percentile** (~$250,000) → `annual_inc_cap`; original column retained |
+| `revol_util` | A handful of values > 100% (data errors) | **Clip at 100%** |
+| `dti` | Values > 100 are implausible for consumer loans | **Clip at 100%** |
 
 All decisions are logged with before/after counts printed in the notebook.
 
 ---
 
+## Sample Flow
+
+| Step | Rows |
+|---|---|
+| Raw accepted CSV | 2,260,701 |
+| After date filter (2013–2016) | 1,225,945 |
+| After completed-loan filter | 1,026,558 |
+| After dropping critical NaN | **1,025,982** |
+
+---
+
 ## Outputs Summary
 
-| File | Rows (approx.) | Description |
+| File | Rows | Description |
 |---|---|---|
-| `accepted_cleaned.parquet` | ~700 K | Completed loans, 2013–2016, cleaned |
-| `accepted_with_current.parquet` | ~800 K | Same but includes Current loans |
-| `rejected_cleaned.parquet` | ~8 M | Rejected applications, 2013–2016, basic cleaning |
+| `accepted_cleaned.parquet` | 1,025,982 | Completed loans, 2013–2016, fully cleaned |
+| `accepted_with_current.parquet` | 1,225,945 | Same period but includes Current / Late loans |
+| `rejected_cleaned.parquet` | 10,323,895 | Rejected applications, 2013–2016, basic cleaning |
 
 ---
 
