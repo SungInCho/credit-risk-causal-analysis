@@ -1,0 +1,70 @@
+{
+  "SELECTED_NUMERIC": [
+    "dti",
+    "revol_util",
+    "emp_length_num",
+    "open_acc",
+    "inq_last_6mths",
+    "log_annual_inc",
+    "total_acc",
+    "loan_amnt",
+    "revol_bal",
+    "fico_mid"
+  ],
+  "SELECTED_NOMINAL": [
+    "home_ownership_OWN",
+    "home_ownership_RENT",
+    "verification_status_Source Verified",
+    "verification_status_Verified",
+    "purpose_home_asset",
+    "purpose_medical",
+    "purpose_other",
+    "purpose_planned_purchase",
+    "purpose_small_business",
+    "ever_delinq"
+  ],
+  "SELECTED_ORDINAL": [
+    "term_months_encoded",
+    "issue_year_encoded"
+  ],
+  "COVARIATES": [
+    "dti",
+    "revol_util",
+    "emp_length_num",
+    "open_acc",
+    "inq_last_6mths",
+    "log_annual_inc",
+    "total_acc",
+    "loan_amnt",
+    "revol_bal",
+    "fico_mid",
+    "home_ownership_OWN",
+    "home_ownership_RENT",
+    "verification_status_Source Verified",
+    "verification_status_Verified",
+    "purpose_home_asset",
+    "purpose_medical",
+    "purpose_other",
+    "purpose_planned_purchase",
+    "purpose_small_business",
+    "term_months_encoded",
+    "issue_year_encoded",
+    "ever_delinq",
+    "grade_num",
+    "subgrade_num"
+  ],
+  "GRADE_ORDER": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G"
+  ],
+  "DEFAULT_STATUSES": [
+    "Charged Off",
+    "Default",
+    "Does not meet the credit policy. Status:Charged Off"
+  ]
+}
