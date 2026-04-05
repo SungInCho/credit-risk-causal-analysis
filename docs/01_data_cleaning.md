@@ -1,98 +1,105 @@
-# 01 — Data Cleaning
+# 01. Data Cleaning
 
-**Notebook**: [`notebooks/01_data_cleaning.ipynb`](../notebooks/01_data_cleaning.ipynb)
-**Inputs**: `data/raw/accepted_2007_to_2018Q4.csv`, `data/raw/rejected_2007_to_2018Q4.csv`
-**Outputs**: `data/processed/accepted_cleaned.parquet`, `data/processed/accepted_with_current.parquet`, `data/processed/rejected_cleaned.parquet`
+## Overview
 
----
+This notebook prepares the raw Lending Club loan data for analysis through four cleaning steps: date filtering, data type conversion, missing value handling, and outlier treatment. Both accepted and rejected loan datasets are processed. Feature engineering and treatment variable construction are deferred to Notebook 02 after exploratory analysis.
 
-## Scope
-
-This notebook covers exactly four cleaning steps and nothing more. Feature engineering and treatment variable construction are deferred to Notebook 02, after exploratory analysis has informed those decisions.
+**Input**: `accepted_2007_to_2018Q4.csv`, `rejected_2007_to_2018Q4.csv`
+**Output**: `accepted_cleaned.parquet`, `accepted_with_current.parquet`, `rejected_cleaned.parquet`
 
 ---
 
-## Step 1 — Date Filtering (2013–2016)
+## Part A: Accepted Loan Data
 
-**Why 2013–2016?**
+### Raw Data
 
-The core identification strategy requires loans with *resolved* outcomes (Fully Paid or Charged Off). The data has a cut-off of 2018 Q4.
-
-- A 36-month loan issued in December 2016 matures in December 2019 — so most of the balance in the 2013–2016 cohort has already resolved by the cut-off.
-- Loans issued in 2017–2018 are frequently still labeled *Current* at the cut-off, making their outcomes censored. Including them would downward-bias observed default rates.
-- Pre-2013 loans reflect a structurally different post-GFC market and are excluded for homogeneity.
-
-**Implementation**:
-- Parse `issue_d` (e.g. `"Jan-2015"`) to a `datetime` object; extract `issue_year` as a nullable `Int64` column.
-- Keep rows where `2013 ≤ issue_year ≤ 2016` → **1,225,945 rows**.
-- Separately save a copy that retains *Current* loans (`accepted_with_current.parquet`) for the robustness check in Notebook 05.
-- For the main analysis, keep only completed loan statuses: *Fully Paid*, *Charged Off*, *Default*, and the two "does not meet credit policy" variants → **1,026,558 rows** (199,387 Current/Late/Grace Period loans dropped).
+- **Shape**: 2,260,701 rows x 27 selected columns
+- **Selected columns**: `id`, `loan_amnt`, `funded_amnt`, `term`, `int_rate`, `grade`, `sub_grade`, `emp_length`, `home_ownership`, `annual_inc`, `verification_status`, `issue_d`, `loan_status`, `purpose`, `dti`, `delinq_2yrs`, `fico_range_low`, `fico_range_high`, `inq_last_6mths`, `mths_since_last_delinq`, `open_acc`, `pub_rec`, `revol_bal`, `revol_util`, `total_acc`, `application_type`, `addr_state`
 
 ---
 
-## Step 2 — Data Type Conversion
+### Step 1 — Date Filtering (2013-2016)
 
-| Column | Raw format | Converted to | Notes |
-|---|---|---|---|
-| `int_rate` | `"13.56%"` (string) | `float` | Strip `%` and whitespace |
-| `term` | `"36 months"` | `int` (`term_months`) | Extract first integer with regex |
-| `revol_util` | `"45.2%"` (string) | `float` | Strip `%`; non-numeric → `NaN` |
-| `emp_length` | `"3 years"` etc. | `int` (`emp_length_num`) | Ordinal map: `< 1 year` → 0, `10+ years` → 10 |
-| `fico_range_low/high` | Two integers | `float` (`fico_mid`) | Midpoint of the reported range |
+**Rationale**:
+- 36-month loans issued through 2016 matured by early 2019, well before the 2018Q4 data cutoff, so outcomes are largely resolved.
+- 2017+ loans still labeled "Current" introduce censoring bias and downward-biased default rates.
+- Pre-2013 loans have smaller volume and structurally different market conditions.
+
+**Result**: 1,225,945 loans after 2013-2016 filter.
+
+A copy including "Current" loans is preserved for robustness checks in Notebook 05. The main analysis retains only completed loans:
+
+| Status | Count |
+|---|---|
+| Fully Paid | 820,316 |
+| Charged Off | 206,230 |
+| Default | 12 |
+| **Total (completed)** | **1,026,558** |
 
 ---
 
-## Step 3 — Missing Value Handling
+### Step 2 — Data Type Conversion
 
-| Column | Missing reason | Treatment |
+| Original Field | Transformation | New Field |
 |---|---|---|
-| `mths_since_last_delinq` | Never delinquent | Fill with `999` (sentinel); also create binary `ever_delinq` flag |
-| `emp_length_num` | "n/a" / self-employed | Fill with `-1` to distinguish from "< 1 year" (0) |
-| `revol_util` | ~0.3% missing | Fill with **grade-level median** |
-| Critical columns (`int_rate`, `grade`, `sub_grade`, `dti`, `fico_mid`, `annual_inc`, `loan_amnt`, `term_months`, `loan_status`) | Data error | **Drop row** |
-
-Critical columns are defined as those required for both outcome construction and basic covariate control. Less than 0.5% of rows are affected.
+| `term` ("36 months") | Extract integer via regex | `term_months` (36 or 60) |
+| `emp_length` ("< 1 year", ..., "10+ years") | Ordinal map 0-10 | `emp_length_num` |
+| `fico_range_low` / `fico_range_high` | Midpoint average | `fico_mid` |
 
 ---
 
-## Step 4 — Outlier Handling
+### Step 3 — Missing Value Handling
 
-| Column | Issue | Treatment |
+| Variable | Missing Count | Strategy |
 |---|---|---|
-| `annual_inc` | A small number of entries exceed $10 M — clear data-entry errors | **Cap at the 99th percentile** (~$250,000) → `annual_inc_cap`; original column retained |
-| `revol_util` | A handful of values > 100% (data errors) | **Clip at 100%** |
-| `dti` | Values > 100 are implausible for consumer loans | **Clip at 100%** |
+| `mths_since_last_delinq` | 506,129 | Fill with 999 (never delinquent); create binary `ever_delinq` flag |
+| `emp_length` / `emp_length_num` | 58,454 | Fill with "Unknown" / -1 to distinguish from "< 1 year" (0) |
+| `revol_util`, `dti`, `inq_last_6mths` | 576 total | Drop rows (trivial count) |
 
-All decisions are logged with before/after counts printed in the notebook.
+**After handling**: 1,025,982 rows with zero missing values.
 
 ---
 
-## Sample Flow
+### Step 4 — Outlier Handling
+
+| Variable | Issue | Treatment |
+|---|---|---|
+| `annual_inc` | Max = $9,550,000 (data-entry errors) | Cap at 99th percentile ($250,000) -> `annual_inc_cap` |
+| `revol_util` | Some entries > 100% | Clip at 100% |
+| `dti` | Some entries > 100% | Clip at 100% |
+
+---
+
+### Sample Flow
 
 | Step | Rows |
 |---|---|
 | Raw accepted CSV | 2,260,701 |
-| After date filter (2013–2016) | 1,225,945 |
+| After date filter (2013-2016) | 1,225,945 |
 | After completed-loan filter | 1,026,558 |
-| After dropping critical NaN | **1,025,982** |
+| After dropping missing values | **1,025,982** |
 
 ---
 
-## Outputs Summary
+## Part B: Rejected Loan Data
 
-| File | Rows | Description |
+### Raw Data
+
+- **Shape**: 27,648,741 rows x 9 columns
+
+### Processing
+
+1. **Date filtering**: Restrict to 2013-2016 application dates
+2. **Type conversion**: Parse `Debt-To-Income Ratio` (percentage string to numeric), map `Employment Length` to ordinal, extract `Amount Requested` and `Risk_Score`
+
+**Result**: 10,323,895 rejected loan records
+
+---
+
+## Output Summary
+
+| Dataset | Shape | Description |
 |---|---|---|
-| `accepted_cleaned.parquet` | 1,025,982 | Completed loans, 2013–2016, fully cleaned |
-| `accepted_with_current.parquet` | 1,225,945 | Same period but includes Current / Late loans |
-| `rejected_cleaned.parquet` | 10,323,895 | Rejected applications, 2013–2016, basic cleaning |
-
----
-
-## What Is NOT Done Here
-
-- No feature engineering (log-transforms, encodings, interaction terms)
-- No treatment or outcome variable creation
-- No train/test split
-- No imputation beyond the simple rules above
-
-All of the above are handled in Notebook 02 after EDA.
+| `accepted_cleaned.parquet` | (1,025,982 x 33) | Completed loans, 2013-2016, outliers handled |
+| `accepted_with_current.parquet` | (1,225,945 x 28) | Includes "Current" loans for robustness checks |
+| `rejected_cleaned.parquet` | (10,323,895 x 14) | Rejected loans, 2013-2016, basic cleaning |

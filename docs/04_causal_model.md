@@ -1,189 +1,151 @@
-# 04 — Causal Models
+# 04. Causal Models
 
-**Notebook**: [`notebooks/04_causal_model.ipynb`](../notebooks/04_causal_model.ipynb)
-**Input**: `data/processed/accepted_modeling.parquet`, `data/processed/meta.json`
-**Outputs**: `outputs/figures/fig17–fig21_*.png`
+## Overview
 
----
+This notebook applies four causal inference methods to estimate the effect of higher interest rates on default, plus a sub-grade boundary analysis for local validation. All methods condition on observable borrower characteristics and exploit within-grade rate variation.
 
-## Research Question
-
-> Among observationally similar approved Lending Club borrowers, how much does a higher interest rate **increase** the probability of default?
-
-**Treatment**: `high_rate` — above-median interest rate within the same grade
-**Outcome**: `default` (binary: 1 = Charged Off or Default)
+**Input**: `accepted_modeling.parquet` (1,025,917 rows, 24 covariates)
+**Treatment**: `high_rate` (binary) / `int_rate` (continuous, for DML)
+**Outcome**: `default` (binary)
 **Identification assumption**: Conditional on observable borrower characteristics, within-grade rate assignment is as-good-as-random.
-
----
-
-## Nuisance Model Specifications
-
-All causal methods in this notebook rely on one or both of the following ML nuisance estimators:
-
-**Propensity score model** — Logistic Regression with L2 regularisation (C=0.5), scores clipped to [0.01, 0.99].
-
-**Outcome model** — XGBClassifier with:
-```
-n_estimators=200, max_depth=4, learning_rate=0.05,
-subsample=0.8, colsample_bytree=0.8
-```
-
-**DML treatment/outcome models** — XGBRegressor with the same tree hyperparameters.
-
-All nuisance models use **5-fold StratifiedKFold cross-fitting**. The same data is never used to both fit the nuisance model and construct the pseudo-outcome, which is required for valid semiparametric inference with flexible ML estimators.
 
 ---
 
 ## Method 1 — Propensity Score Weighting (IPW)
 
-### Intuition
+### Propensity Score Estimation
 
-Reweight the sample so that treated (high-rate) and control (low-rate) borrowers look exchangeable on observable covariates. Each treated unit is weighted by `1/e(X)` and each control unit by `1/(1−e(X))`, where `e(X) = P(high_rate=1 | X)`.
+- 5-fold cross-fitted logistic regression (C=0.5)
+- PS range: [0.0005, 0.8873], PS AUC = 0.6468
+- Clipped to [1st percentile, 99th percentile] = [0.20, 0.76]
+- 100% of observations in common support
 
-### Implementation
+The propensity score distributions for high-rate and low-rate borrowers show substantial overlap, indicating that treatment assignment is not deterministic given observables. This supports the positivity assumption.
 
-1. **Cross-fitted propensity scores** — 5-fold StratifiedKFold with logistic regression, scores clipped to [0.01, 0.99].
-2. **Overlap check** — plot PS distributions for treated vs. control. Crump trimming (0.1 < e(X) < 0.9) retains >95% of the sample.
-3. **Horvitz–Thompson estimators** — ATE and ATT.
-4. **Bootstrap 95% CI** — 500 bootstrap replicates.
-5. **Covariate balance** — standardised mean differences (SMD) before and after weighting. Post-weighting SMD < 0.1 for all key covariates.
+### Stabilized Hajek Estimator
 
-### Estimands
-
-| Estimand | Formula | Interpretation |
+| Estimand | Estimate | 95% CI |
 |---|---|---|
-| ATE | E[Y(1) − Y(0)] | Average effect for a randomly selected borrower |
-| ATT | E[Y(1) − Y(0) \| T=1] | Average effect for borrowers who received above-median rates |
+| IPW-ATE | **+2.4473 pp** | [2.281, 2.615] (bootstrap, 500 reps) |
+| IPW-ATT | **+0.9162 pp** | — |
+
+The IPW-ATE exceeds the naive difference (+1.71 pp), suggesting that risk sorting partially masked the true pricing effect. The smaller IPW-ATT indicates that borrowers who actually received higher pricing are more risk-tolerant on average — consistent with treatment effect heterogeneity.
+
+### Covariate Balance After IPW
+
+| Variable | SMD (Unweighted) | SMD (IPW) |
+|---|---|---|
+| fico_mid | 0.155 | 0.009 |
+| dti | 0.008 | 0.010 |
+| log_annual_inc | 0.056 | 0.004 |
+| revol_util | 0.132 | 0.004 |
+| loan_amnt | 0.030 | 0.008 |
+| inq_last_6mths | 0.105 | 0.004 |
+| grade_num | 0.037 | 0.030 |
+
+All SMDs reduced well below conventional thresholds after weighting, confirming strong comparability.
 
 ---
 
-## Method 2 — Doubly Robust Estimation (AIPW) ← Primary Estimate
+## Method 2 — Doubly Robust Estimation (AIPW)
 
-### Intuition
+AIPW combines a propensity score model (logistic regression) with outcome models (XGBClassifier, n_estimators=200, max_depth=4) under 5-fold cross-fitting. The estimator is **doubly robust**: consistent if either the propensity score or the outcome model is correctly specified.
 
-The Augmented IPW (AIPW) estimator combines a propensity model `e(X)` and an outcome model `μ_a(X) = E[Y | T=a, X]`. It is **doubly robust**: consistent if *either* model is correctly specified (but not necessarily both).
+### Results
 
-### Pseudo-outcome (influence function)
+| Estimand | Estimate | SE | 95% CI | z | p-value |
+|---|---|---|---|---|---|
+| **AIPW-ATE** | **+2.0800 pp** | 0.0808 pp | [1.9218, 2.2383] | 25.76 | < 0.001 |
+| AIPW-ATT | +2.0353 pp | — | — | — | — |
 
-```
-ψ_i = (μ₁(Xᵢ) − μ₀(Xᵢ))
-      + Tᵢ·(Yᵢ − μ₁(Xᵢ)) / e(Xᵢ)
-      − (1−Tᵢ)·(Yᵢ − μ₀(Xᵢ)) / (1 − e(Xᵢ))
-
-ATE = mean(ψ_i)
-SE  = std(ψ_i) / sqrt(n)
-```
-
-### Implementation
-
-- **5-fold StratifiedKFold cross-fitting** for both the propensity score (logistic regression) and the outcome model (XGBClassifier fitted separately on treated and control units in each fold).
-- Cross-fitting removes the requirement for the nuisance estimators to satisfy Donsker conditions, enabling use of flexible ML models without regularisation bias.
-- Inference via the **influence-function variance**: `SE = std(ψ) / √n`.
-
-### Why AIPW is preferred over plain IPW
-
-- Robustness to misspecification of either nuisance model.
-- Semiparametrically efficient — achieves the Cramér–Rao lower bound under the non-parametric efficiency bound.
-- Influence-function standard errors are valid even with flexible ML nuisance estimators.
+The similarity between ATE and ATT suggests that the impact of higher interest rates is relatively uniform across the population at the aggregate level.
 
 ---
 
 ## Method 3 — Double Machine Learning (DML)
 
-### Motivation
+### Design
 
-IPW and AIPW treat `high_rate` as binary. DML works directly with the **continuous** `int_rate`, estimating the structural parameter `θ` in:
+Partially linear model (Robinson 1988; Chernozhukov et al. 2018):
+- `Y = theta * T + g(X) + epsilon`, `T = m(X) + v`
+- **Continuous treatment**: `int_rate` (not `high_rate`)
+- Nuisance models: XGBClassifier for E[Y|X], XGBRegressor for E[T|X]
+- 5-fold cross-fitting; heteroskedasticity-robust standard errors
 
-```
-Y = θ · T + g(X) + ε
-T = m(X) + v
-```
+### Results
 
-where `g(X)` and `m(X)` are arbitrary functions of covariates.
+| Metric | Value |
+|---|---|
+| theta | **+1.1532 pp** per 1 pp rate increase |
+| SE | 0.0358 pp |
+| 95% CI | [1.0830, 1.2235] |
+| First-stage R-squared | 0.9463 |
 
-### Estimation (Robinson's partialling-out)
-
-1. Cross-fit `m(X) = E[T | X]` and `g(X) = E[Y | X]` using **XGBRegressor** (5-fold KFold).
-2. Compute residuals: `Ṽ = T − m̂(X)`, `Ũ = Y − ĝ(X)`.
-3. Estimate `θ̂ = (Ṽ'Ũ) / (Ṽ'Ṽ)` — OLS on residuals, no intercept.
-4. Sandwich standard error for valid inference.
-
-**Interpretation of θ̂**: after partialling out all observable confounders, each additional 1 pp in interest rate raises P(default) by `θ̂ × 100` pp.
-
-**First-stage R²** measures how much of the rate variation is explained by the controls. The remaining unexplained variation is what DML identifies on.
+After flexibly controlling for borrower risk, each 1 pp increase in interest rate leads to approximately 1.15 pp increase in default probability. The high first-stage R-squared (0.95) means observables explain most rate variation; the remaining unexplained variation is what DML identifies the causal effect on.
 
 ---
 
-## Method 4 — Causal Forest (Heterogeneous Treatment Effects)
+## Method 4 — Causal Forest (CATE)
 
-### Goal
+### Design
 
-Estimate the **Conditional Average Treatment Effect** (CATE) as a function of covariates:
+`CausalForestDML` from `econml`:
+- model_y: GradientBoostingRegressor (100 estimators, max_depth=4)
+- model_t: LogisticRegression (C=0.5)
+- 500 trees, min_samples_leaf=50, 5-fold cross-fitting
 
-```
-τ(x) = E[Y(1) − Y(0) | X = x]
-```
+### Results
 
-This reveals *for which borrowers* the effect of above-median pricing is largest.
+| Metric | Value |
+|---|---|
+| Overall Mean CATE | **+1.8027 pp** |
+| Std Dev | 1.03 pp |
+| Range | [-3.55 pp, +6.60 pp] |
+| Median | +1.83 pp |
 
-### Implementation
+### Heterogeneity by Subgroup
 
-- `CausalForestDML` from `econml` with `n_estimators=100`, `min_samples_leaf=5`.
-- Combines DML residualisation with a causal forest for heterogeneous effect estimation.
+**By Grade**: Treatment effects are larger for lower-risk grades (A-C) and smaller for higher-risk grades (D-G). The additional interest burden more directly increases default risk for otherwise safer borrowers, while for already risky borrowers, default is driven by a broader set of underlying factors.
 
-### CATE Subgroup Analysis
+**By Term**: 36-month loans show a larger mean CATE (2.06 pp) than 60-month loans (1.00 pp).
 
-| Subgroup | Direction vs. ATE | Economic reasoning |
-|---|---|---|
-| High-DTI (Q4) | Larger | Already stretched; a higher payment load tips them into default |
-| Low-FICO (Q1) | Larger | Less financial buffer to absorb rate shock |
-| 60-month loans | Larger | Longer exposure duration amplifies cumulative burden |
-| Grade E–G | Larger | Near-marginal borrowers are most sensitive to rate increases |
-| Grade A–B | Smaller | Financially resilient borrowers absorb rate increases |
+**By DTI and FICO**: Relatively small variation across quantiles, suggesting limited additional heterogeneity along these dimensions beyond what grade captures.
 
 ---
 
-## Method 5 — Sub-Grade Boundary Analysis (Local Wald Estimates)
+## Method 5 — Sub-Grade Boundary Analysis
 
-### Intuition
+A quasi-RD approach comparing borrowers just below and above each grade boundary (e.g., A5 vs. B1) where interest rates jump discretely.
 
-At the boundary between adjacent sub-grade tiers (e.g., B5 → C1), the assigned rate jumps discontinuously while the underlying borrower risk score should be continuous. Borrowers just below vs. just above the boundary form a quasi-experimental comparison group.
+| Boundary | N (low) | N (high) | Rate Jump | Default Diff | Wald Estimate | p-value |
+|---|---|---|---|---|---|---|
+| A5 \| B1 | 49,066 | 54,060 | +0.57 pp | +2.01 pp | 0.035 | < 0.001 |
+| B5 \| C1 | 61,310 | 64,688 | +0.73 pp | +2.16 pp | 0.030 | < 0.001 |
+| C5 \| D1 | 50,111 | 40,667 | +0.83 pp | +2.05 pp | 0.025 | < 0.001 |
+| D5 \| E1 | 22,986 | 19,664 | +0.50 pp | +2.96 pp | 0.059 | < 0.001 |
+| E5 \| F1 | 10,265 | 7,828 | +0.89 pp | +0.06 pp | 0.001 | 0.940 |
+| F5 \| G1 | 3,002 | 2,071 | +0.51 pp | -0.91 pp | -0.018 | 0.526 |
 
-### Wald Estimate
-
-```
-Wald = Δdefault / Δrate
-     = (default_rate_{X1} − default_rate_{X5}) /
-       (mean_rate_{X1}    − mean_rate_{X5})
-```
-
-This is a local instrumental variable analogue: the grade boundary instruments for the rate jump.
-
-### Validity Checks
-
-- **Rate continuity in FICO**: the FICO score difference at each boundary should be small (no sharp FICO discontinuity that would confound the comparison).
-- **Wald estimates vs. AIPW ATE**: Wald estimates should be directionally consistent with the global AIPW ATE.
+Discrete rate increases at grade boundaries produce significant default increases for grades A-D, but the effect diminishes and becomes insignificant for E-G. This is consistent with the Causal Forest CATE pattern.
 
 ---
 
 ## Results Summary
 
-| Method | Treatment | ATE (pp) | 95% CI | p-value |
-|---|---|---|---|---|
-| Naive difference | `high_rate` | Largest | — | — |
-| IPW-ATE | `high_rate` | ~2.1 | Bootstrap | < 0.001 |
-| **AIPW (doubly robust)** | **`high_rate`** | **~2.08** | **Influence function** | **< 0.001** |
-| DML θ̂ (per 1 pp rate) | `int_rate` | ~0.2 pp/pp | Sandwich SE | < 0.001 |
-| Causal Forest ATE | `high_rate` | ~2.1 | Forest CIs | < 0.001 |
-| Sub-grade Wald | `int_rate` | Consistent | Local | — |
-
-All methods agree on sign and approximate magnitude, providing convergent validity for the causal claim.
+| Method | Treatment | ATE (pp) | 95% CI |
+|---|---|---|---|
+| Naive difference | high_rate | +1.7073 | N/A |
+| IPW-ATE | high_rate | +2.4473 | [2.281, 2.615] |
+| **AIPW (doubly robust)** | **high_rate** | **+2.0800** | **[1.922, 2.238]** |
+| DML (per 1 pp rate) | int_rate | +1.1532 | [1.083, 1.224] |
+| Causal Forest mean CATE | high_rate | +1.8027 | — |
 
 ---
 
 ## Key Takeaways
 
-1. **Positive, significant causal effect**: being assigned an above-median rate within one's grade increases P(default) by approximately 2 pp after doubly robust adjustment.
-2. **Much smaller than the naive estimate**: grade-level confounding drives most of the raw association; the FWL decomposition showed 66% of the naive coefficient is explained by observables.
-3. **Heterogeneous effects**: the treatment impact is largest for high-DTI, low-FICO borrowers — precisely the population most financially vulnerable to incremental interest burden.
-4. **Boundary evidence is consistent**: local Wald estimates at grade boundaries are directionally consistent with the global AIPW estimate.
+1. **All methods find a positive, significant effect** of higher interest rates on default.
+2. **Differences between naive and causal estimates** highlight the importance of adjusting for confounding. The naive estimate reflects both rate effects and underlying borrower risk.
+3. **Treatment effects exhibit clear heterogeneity across credit grades**, with stronger effects in lower-risk segments and weaker effects in higher-risk segments.
+4. **Heterogeneity across DTI and FICO is limited**, indicating that grade captures most of the relevant variation.
+5. Interest rates may help screen borrowers at the selection stage, but conditional on loan origination, **higher interest rates increase the probability of default**.

@@ -1,160 +1,122 @@
-# 05 — Robustness Checks & Selection Bias Appendix
+# 05. Robustness Checks and Selection Bias Appendix
 
-**Notebook**: [`notebooks/05_robustness.ipynb`](../notebooks/05_robustness.ipynb)
-**Inputs**: `data/processed/accepted_modeling.parquet`, `data/processed/accepted_with_current.parquet`, `data/processed/rejected_cleaned.parquet`
-**Outputs**: `outputs/figures/fig22–fig24_*.png`
+## Overview
 
----
+This notebook verifies that the AIPW ATE from Notebook 04 is stable across different sample restrictions and specification choices, and characterizes the selection process that produces the approved-loan sample.
 
-## Purpose
-
-Verify that the AIPW ATE from Notebook 04 is stable across different:
-- **Sample restrictions** (term, vintage, purpose)
-- **Treatment definitions** (different quantile cutoffs)
-- **Population scope** (approved vs. rejected borrowers)
-
-And characterise how **sample selection** limits external validity.
+**Input**: `accepted_modeling.parquet`, `accepted_with_current.parquet`, `rejected_cleaned.parquet`
 
 ---
 
-## Robustness Checks
-
-### RC 1 — 36-Month Loans Only
-
-**Motivation**: The 36-month subsample has a cleaner and more uniform maturity horizon within the 2013–2016 window. All loans in this group should have resolved by 2018 Q4. This avoids conflating the term-length risk differential with the rate effect.
-
-**Implementation**: Restrict to `term_months == 36`. Recompute the treatment variable within this subsample (within-grade median may differ from the full sample). Run AIPW with the same covariate set.
+## Baseline Reference
 
 | Metric | Value |
 |---|---|
-| Sample size | 777,875 |
-| Default rate | 15.79% |
+| N | 1,025,917 |
+| AIPW ATE | +2.0836 pp |
+| 95% CI | [1.9254, 2.2419] |
+
+---
+
+## Robustness Check 1 — 36-Month Loans Only
+
+Restricting to 36-month loans provides a cleaner maturity horizon with less censoring risk.
+
+| Metric | Value |
+|---|---|
+| N | 777,875 |
+| Default Rate | 15.79% |
 | AIPW ATE | **+2.2608 pp** |
-| 95% CI | [2.09, 2.43] |
+| 95% CI | [2.0899, 2.4317] |
+
+Slightly larger than baseline, consistent with the Causal Forest finding of larger treatment effects for shorter-term loans.
 
 ---
 
-### RC 2 — 2014–2015 Vintage Only
+## Robustness Check 2 — 2014-2015 Vintage Only
 
-**Motivation**: These two vintage years have the highest loan volume and the most uniform macroeconomic environment. Restricting to this window removes any confounding from year-to-year macro changes.
-
-**Implementation**: Filter to `issue_year_encoded ∈ {1, 2}` (i.e., 2014–2015). Use the pre-computed `high_rate` treatment based on full-sample grade medians.
+Restricting to a narrower issuance window ensures homogeneous market conditions.
 
 | Metric | Value |
 |---|---|
-| Sample size | 598,375 |
-| Default rate | 19.54% |
+| N | 598,375 |
+| Default Rate | 19.54% |
 | AIPW ATE | **+2.0372 pp** |
-| 95% CI | [1.79, 2.28] |
+| 95% CI | [1.7941, 2.2804] |
+
+Nearly identical to the baseline estimate.
 
 ---
 
-### RC 3 — Purpose Subsamples
+## Robustness Check 3 — Purpose Subsamples
 
-**Motivation**: Default rates vary by loan purpose, and the rate effect could differ by borrower type. Splitting by purpose tests whether the pooled estimate masks important heterogeneity.
+| Subsample | N | Default Rate | AIPW ATE | 95% CI |
+|---|---|---|---|---|
+| Debt-related purposes | 842,797 | 20.09% | **+2.1417 pp** | [1.966, 2.317] |
+| Other purposes | 183,120 | 20.11% | **+1.7391 pp** | [1.373, 2.106] |
 
-#### RC 3a — Debt-Related Purposes (debt consolidation + credit card)
-
-| Metric | Value |
-|---|---|
-| Sample size | 842,797 |
-| AIPW ATE | **+2.1417 pp** |
-| 95% CI | [1.97, 2.32] |
-
-#### RC 3b — Other Purposes
-
-| Metric | Value |
-|---|---|
-| Sample size | 183,120 |
-| AIPW ATE | **+1.7391 pp** |
-| 95% CI | [1.37, 2.11] |
-
-Both subsamples show positive, statistically significant effects directionally consistent with the baseline.
+The effect is slightly weaker for non-debt purposes but remains positive and significant across both groups.
 
 ---
 
-### RC 4 — High-Rate Threshold Sensitivity
+## Robustness Check 4 — High-Rate Threshold Sensitivity
 
-**Motivation**: The binary treatment `high_rate` is defined using the grade-level **median** (50th percentile). This is a reasonable but arbitrary choice. Varying the threshold tests whether results are sensitive to this definition.
+The treatment definition is varied from the 25th to 75th percentile cutoff within each grade:
 
-**Implementation**: Re-run AIPW for five quantile cutoffs — 25th, 33rd, 50th, 67th, and 75th percentile.
+| Quantile | % Treated | AIPW ATE (pp) | 95% CI |
+|---|---|---|---|
+| 0.25 | 72.2% | +2.1052 | [1.936, 2.274] |
+| 0.33 | 62.0% | +2.1675 | [2.011, 2.324] |
+| 0.50 (baseline) | 46.9% | +2.0836 | [1.925, 2.242] |
+| 0.67 | 32.2% | +1.9208 | [1.740, 2.102] |
+| 0.75 | 22.2% | +1.4665 | [1.198, 1.735] |
 
-| Quantile cutoff | % Treated | AIPW ATE (pp) |
-|---|---|---|
-| q = 0.25 | ~72.2% | **+2.1052** |
-| q = 0.33 | ~67% | **+2.1675** |
-| q = 0.50 | ~50% | **+2.0836** (baseline) |
-| q = 0.67 | ~33% | **+1.9208** |
-| q = 0.75 | ~25% | **+1.4665** |
-
-The ATE declines **monotonically** as the cutoff moves from low to high quantiles. This is consistent with dosing logic: comparing the top vs. bottom 25% captures a larger rate contrast, but the treated group (75% of borrowers) is more diluted with near-median units, pulling the estimate down.
+The monotonic decline as the threshold increases provides evidence of treatment effect heterogeneity. The marginal impact of interest rates appears stronger among relatively lower-risk borrowers and attenuates for higher-risk segments.
 
 ---
 
-## Forest Plot
+## Robustness Summary
 
-All robustness estimates are collected into a single forest plot (`fig24_robustness_forest.png`) showing the AIPW ATE and 95% CI for each specification. All estimates are positive and statistically significant, supporting the robustness of the main finding.
+| Specification | ATE (pp) | 95% CI | N |
+|---|---|---|---|
+| **Baseline AIPW** | **+2.084** | [1.925, 2.242] | 1,025,917 |
+| 36-month loans only | +2.261 | [2.090, 2.432] | 777,875 |
+| 2014-2015 vintage | +2.037 | [1.794, 2.280] | 598,375 |
+| Debt purposes | +2.142 | [1.966, 2.317] | 842,797 |
+| Other purposes | +1.739 | [1.373, 2.106] | 183,120 |
+
+The treatment effect remains stable across all subsamples, including different loan terms, issuance periods, and loan purposes. This consistency strengthens the causal interpretation.
 
 ---
 
-## Selection Bias Appendix
+## Appendix: Selection Bias
 
-### Approved vs. Rejected Borrowers
+### Approved vs. Rejected Covariate Distributions
 
-All causal estimates in Notebooks 03–04 are identified *only on the approved Lending Club sample*. This section quantifies how different the approved and rejected populations are to assess the external validity of the estimates.
+Rejected applicants differ substantially from approved borrowers:
+
+1. **FICO Score**: Acts as a hard threshold (around 660) in the approval process, indicating rule-based screening rather than a smooth decision boundary.
+2. **DTI**: Both extremely low and extremely high DTI values are associated with rejection, while mid-range borrowers are evaluated more flexibly.
+3. **Loan Amount**: Certain commonly requested amounts are disproportionately rejected, suggesting interaction with underwriting rules.
+4. **Employment Length**: Having no employment history is a strong negative signal for approval.
 
 ### Approval Model
 
-A logistic regression model is fitted to predict approval status from observable loan characteristics:
-
-```
-P(approved | loan_amnt, fico_mid, dti, emp_length_num)
-```
+A logistic regression trained on combined approved/rejected data:
 
 | Metric | Value |
 |---|---|
-| 5-fold CV AUC | **0.9215** |
-| DTI coefficient | **−85.1** (dominant negative predictor) |
-| FICO coefficient | +1.4953 |
-| emp_length coefficient | +1.1807 |
+| 5-Fold CV AUC | **0.9215** |
 
-The very high AUC (0.9215) indicates that observable characteristics nearly perfectly determine approval. DTI is by far the strongest predictor: high debt burden is the primary reason for rejection.
+| Feature | Log-Odds (Standardized) |
+|---|---|
+| fico_mid | +1.4953 |
+| emp_length_num | +1.1807 |
+| loan_amnt | -0.1966 |
+| dti | -85.1076 |
 
-### Approved vs. Rejected Population Comparison
+The high AUC (0.92) confirms that approval is highly predictable from observables. FICO is the strongest positive predictor, DTI has a strong negative effect.
 
-| Characteristic | Approved | Rejected |
-|---|---|---|
-| FICO score (avg.) | ~720 | ~670 (−50 pts) |
-| DTI (avg.) | ~18% | ~23% (+5 pp) |
-| Rejected-loan observations (2013–2016) | — | 10,323,895 |
+### Implications for Causal Estimates
 
-### Interpretation
-
-> The causal estimates are **local to the approved Lending Club sample** and should be interpreted as a **lower bound** on the population-level causal effect.
-
-- Rejected applicants are substantially more financially fragile (lower FICO, higher DTI).
-- Their default response to a rate increase would plausibly *exceed* our within-sample estimates.
-- This selection problem cannot be fixed with propensity score methods, which only correct for selection on observables *within* the approved sample. It would require access to underlying credit application data and a model of the approval decision.
-
-### Implications for Policy
-
-If a regulator asks "what happens to aggregate default rates if we raise rates by 1 pp?", our estimate is a lower bound because:
-1. The approved borrowers who receive the rate increase are already positively selected.
-2. A rate increase also changes who gets approved in the first place (intensive vs. extensive margin).
-
----
-
-## Summary of All Robustness Results
-
-| Specification | N | ATE (pp) | 95% CI | Stable? |
-|---|---|---|---|---|
-| Baseline AIPW (Notebook 04) | 1,025,917 | ~2.08 | — | Reference |
-| 36-month loans only | 777,875 | +2.2608 | [2.09, 2.43] | ✓ |
-| 2014–2015 vintage | 598,375 | +2.0372 | [1.79, 2.28] | ✓ |
-| Debt-related purposes | 842,797 | +2.1417 | [1.97, 2.32] | ✓ |
-| Other purposes | 183,120 | +1.7391 | [1.37, 2.11] | ✓ |
-| Threshold q=0.25 | 1,025,917 | +2.1052 | — | ✓ |
-| Threshold q=0.50 (baseline) | 1,025,917 | +2.0836 | — | Reference |
-| Threshold q=0.75 | 1,025,917 | +1.4665 | — | ✓ (monotone) |
-
-All specifications produce positive, statistically significant estimates. The main finding is robust.
+Our causal estimates are identified on a selected subset of relatively stable, rule-compliant borrowers rather than the full applicant population. Rejected applicants are more financially fragile, and their default response to a rate increase would plausibly exceed our within-sample estimates. **Causal estimates based on approved loans likely understate the true impact of interest rates in the broader applicant population.**

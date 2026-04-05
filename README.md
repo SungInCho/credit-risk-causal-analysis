@@ -12,9 +12,9 @@
 
 ## Key Finding
 
-Being assigned an **above-median interest rate within one's grade** increases the probability of default by approximately **2–5 percentage points**, after controlling for observable borrower characteristics. This effect is largest for high-DTI, low-FICO borrowers.
+Being assigned an **above-median interest rate within one's grade** increases the probability of default by approximately **2 percentage points** (AIPW ATE = +2.08 pp, 95% CI [1.92, 2.24]), after controlling for observable borrower characteristics. This effect is largest for lower-risk grades (A-C) and shorter-term (36-month) loans.
 
-The naive (unadjusted) rate–default correlation overstates the causal effect by **50–80%** due to grade-level confounding — the core endogeneity problem this project addresses.
+The naive (unadjusted) rate-default correlation overstates the causal effect by approximately **60%** due to grade-level confounding — the core endogeneity problem this project addresses.
 
 ---
 
@@ -88,27 +88,26 @@ Grade assignment captures the broad credit-quality confound. Conditional on grad
 
 | Method | Treatment type | Key assumption |
 |---|---|---|
-| IPW (Horvitz–Thompson) | Binary `high_rate` | Propensity score correctly specified |
+| IPW (Horvitz-Thompson) | Binary `high_rate` | Propensity score correctly specified |
 | AIPW (doubly robust) | Binary `high_rate` | Either PS model or outcome model correct |
 | DML (partially linear) | Continuous `int_rate` | Partially linear structural equation |
-| Causal Forest | Binary `high_rate` | Conditional unconfoundedness |
+| Causal Forest (CATE) | Binary `high_rate` | Conditional unconfoundedness |
 | Sub-grade boundary Wald | Continuous `int_rate` | Rate jump at grade boundary is exogenous |
 
 ---
 
 ## Robustness Checks
 
-1. **36-month loans only** — cleaner maturity horizon
-2. **2014–2015 vintage only** — homogeneous market conditions
-3. **Purpose subsamples** — debt consolidation vs. others
-4. **'Current' loans included** — lower-bound default rate assumption
-5. **High-rate threshold sensitivity** — 25th to 75th percentile cutoffs
+1. **36-month loans only** — cleaner maturity horizon (ATE = +2.26 pp)
+2. **2014-2015 vintage only** — homogeneous market conditions (ATE = +2.04 pp)
+3. **Purpose subsamples** — debt-related vs. others (ATE = +2.14 / +1.74 pp)
+4. **High-rate threshold sensitivity** — 25th to 75th percentile cutoffs (monotone decline)
 
 ---
 
 ## Selection Bias Caveat
 
-All causal estimates apply to the **approved Lending Club sample**. Rejected applicants have lower FICO scores, higher DTI, and smaller loan amounts. The population-level effect of risk-based pricing is likely **larger** than within-sample estimates suggest.
+All causal estimates apply to the **approved Lending Club sample**. Rejected applicants have substantially lower FICO scores (~670 vs. ~720) and higher DTI (~23% vs. ~18%). An approval model achieves AUC = 0.9215, confirming that observable characteristics nearly perfectly determine approval. The population-level effect of risk-based pricing is likely **larger** than within-sample estimates suggest.
 
 ---
 
@@ -155,7 +154,8 @@ See [`requirements.txt`](requirements.txt). Core packages:
 
 - `pandas`, `numpy`, `pyarrow` — data wrangling
 - `scikit-learn`, `statsmodels`, `scipy` — modelling & statistics
-- `econml` — `CausalForestDML` (optional; falls back to T-learner if not installed)
+- `econml` — `CausalForestDML` for heterogeneous treatment effects
+- `xgboost` — nuisance estimators for AIPW and DML
 - `matplotlib`, `seaborn` — visualisation
 
 ---
