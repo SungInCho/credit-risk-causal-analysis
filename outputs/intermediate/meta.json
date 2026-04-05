@@ -1,15 +1,15 @@
 {
   "SELECTED_NUMERIC": [
-    "dti",
-    "revol_util",
-    "emp_length_num",
-    "open_acc",
     "inq_last_6mths",
-    "log_annual_inc",
-    "total_acc",
-    "loan_amnt",
     "revol_bal",
-    "fico_mid"
+    "open_acc",
+    "log_annual_inc",
+    "loan_amnt",
+    "dti",
+    "total_acc",
+    "emp_length_num",
+    "fico_mid",
+    "revol_util"
   ],
   "SELECTED_NOMINAL": [
     "home_ownership_OWN",
@@ -28,16 +28,16 @@
     "issue_year_encoded"
   ],
   "COVARIATES": [
-    "dti",
-    "revol_util",
-    "emp_length_num",
-    "open_acc",
     "inq_last_6mths",
-    "log_annual_inc",
-    "total_acc",
-    "loan_amnt",
     "revol_bal",
+    "open_acc",
+    "log_annual_inc",
+    "loan_amnt",
+    "dti",
+    "total_acc",
+    "emp_length_num",
     "fico_mid",
+    "revol_util",
     "home_ownership_OWN",
     "home_ownership_RENT",
     "verification_status_Source Verified",
